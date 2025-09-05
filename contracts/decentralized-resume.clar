@@ -3,10 +3,14 @@
 (define-constant ERR-INVALID-DATA (err u102))
 (define-constant ERR-ENTRY-NOT-FOUND (err u103))
 (define-constant ERR-MAX-ENTRIES-REACHED (err u104))
+(define-constant ERR-REQUEST-EXISTS (err u105))
+(define-constant ERR-REQUEST-NOT-FOUND (err u106))
+(define-constant ERR-SELF-REFERENCE (err u107))
 
 (define-constant MAX-WORK-ENTRIES u10)
 (define-constant MAX-EDUCATION-ENTRIES u10)
 (define-constant MAX-SKILLS u20)
+(define-constant MAX-REFERENCES u5)
 
 (define-data-var contract-owner principal tx-sender)
 
@@ -63,7 +67,8 @@
   {
     work-count: uint,
     education-count: uint,
-    skill-count: uint
+    skill-count: uint,
+    reference-count: uint
   }
 )
 
@@ -71,6 +76,30 @@
   { user: principal, endorser: principal }
   {
     message: (string-ascii 300),
+    created-at: uint
+  }
+)
+
+(define-map reference-requests
+  { requester: principal, referee: principal }
+  {
+    message: (string-ascii 300),
+    relationship: (string-ascii 100),
+    duration: (string-ascii 50),
+    status: (string-ascii 20),
+    created-at: uint
+  }
+)
+
+(define-map professional-references
+  { user: principal, referee: principal }
+  {
+    relationship: (string-ascii 100),
+    duration: (string-ascii 50),
+    message: (string-ascii 500),
+    technical-skills: (string-ascii 200),
+    soft-skills: (string-ascii 200),
+    overall-rating: uint,
     created-at: uint
   }
 )
@@ -96,7 +125,7 @@
 )
 
 (define-read-only (get-user-counters (user principal))
-  (default-to { work-count: u0, education-count: u0, skill-count: u0 }
+  (default-to { work-count: u0, education-count: u0, skill-count: u0, reference-count: u0 }
     (map-get? user-counters { user: user }))
 )
 
@@ -107,6 +136,14 @@
   )
 )
 
+(define-read-only (get-reference-request (requester principal) (referee principal))
+  (map-get? reference-requests { requester: requester, referee: referee })
+)
+
+(define-read-only (get-professional-reference (user principal) (referee principal))
+  (map-get? professional-references { user: user, referee: referee })
+)
+
 (define-public (create-profile (name (string-ascii 100))
                               (title (string-ascii 100))
                               (bio (string-ascii 500))
@@ -115,7 +152,7 @@
                               (website (string-ascii 100))
                               (location (string-ascii 100))
                               (is-public bool))
-  (let ((current-time stacks-block-height))
+  (let ((current-time burn-block-height))
     (if (is-eq (len name) u0)
       ERR-INVALID-DATA
       (begin
@@ -136,7 +173,7 @@
         )
         (map-set user-counters
           { user: tx-sender }
-          { work-count: u0, education-count: u0, skill-count: u0 }
+          { work-count: u0, education-count: u0, skill-count: u0, reference-count: u0 }
         )
         (ok true)
       )
@@ -207,7 +244,8 @@
             {
               work-count: (+ current-count u1),
               education-count: (get education-count counters),
-              skill-count: (get skill-count counters)
+              skill-count: (get skill-count counters),
+              reference-count: (get reference-count counters)
             }
           )
           (ok current-count)
@@ -246,7 +284,8 @@
             {
               work-count: (get work-count counters),
               education-count: (+ current-count u1),
-              skill-count: (get skill-count counters)
+              skill-count: (get skill-count counters),
+              reference-count: (get reference-count counters)
             }
           )
           (ok current-count)
@@ -276,7 +315,8 @@
             {
               work-count: (get work-count counters),
               education-count: (get education-count counters),
-              skill-count: (+ current-count u1)
+              skill-count: (+ current-count u1),
+              reference-count: (get reference-count counters)
             }
           )
           (ok current-count)
@@ -287,7 +327,7 @@
 )
 
 (define-public (endorse-user (user principal) (message (string-ascii 300)))
-  (let ((current-time stacks-block-height))
+  (let ((current-time burn-block-height))
     (if (is-eq tx-sender user)
       ERR-NOT-AUTHORIZED
       (if (is-eq (len message) u0)
@@ -348,7 +388,7 @@
 
 (define-public (set-profile-visibility (is-public bool))
   (let ((existing-profile (unwrap! (map-get? user-profiles { user: tx-sender }) ERR-PROFILE-NOT-FOUND))
-        (current-time stacks-block-height))
+        (current-time burn-block-height))
     (map-set user-profiles
       { user: tx-sender }
       {
@@ -365,5 +405,91 @@
       }
     )
     (ok true)
+  )
+)
+
+(define-public (request-reference (referee principal)
+                                 (message (string-ascii 300))
+                                 (relationship (string-ascii 100))
+                                 (duration (string-ascii 50)))
+  (let ((current-time burn-block-height))
+    (if (is-eq tx-sender referee)
+      ERR-SELF-REFERENCE
+      (if (is-some (map-get? reference-requests { requester: tx-sender, referee: referee }))
+        ERR-REQUEST-EXISTS
+        (if (is-eq (len message) u0)
+          ERR-INVALID-DATA
+          (begin
+            (map-set reference-requests
+              { requester: tx-sender, referee: referee }
+              {
+                message: message,
+                relationship: relationship,
+                duration: duration,
+                status: "pending",
+                created-at: current-time
+              }
+            )
+            (ok true)
+          )
+        )
+      )
+    )
+  )
+)
+
+(define-public (provide-reference (requester principal)
+                                 (message (string-ascii 500))
+                                 (technical-skills (string-ascii 200))
+                                 (soft-skills (string-ascii 200))
+                                 (overall-rating uint))
+  (let ((request (unwrap! (map-get? reference-requests { requester: requester, referee: tx-sender }) ERR-REQUEST-NOT-FOUND))
+        (current-time burn-block-height)
+        (counters (get-user-counters requester))
+        (current-count (get reference-count counters)))
+    (if (>= current-count MAX-REFERENCES)
+      ERR-MAX-ENTRIES-REACHED
+      (if (> overall-rating u10)
+        ERR-INVALID-DATA
+        (if (is-eq (len message) u0)
+          ERR-INVALID-DATA
+          (begin
+            (map-set professional-references
+              { user: requester, referee: tx-sender }
+              {
+                relationship: (get relationship request),
+                duration: (get duration request),
+                message: message,
+                technical-skills: technical-skills,
+                soft-skills: soft-skills,
+                overall-rating: overall-rating,
+                created-at: current-time
+              }
+            )
+            (map-set user-counters
+              { user: requester }
+              {
+                work-count: (get work-count counters),
+                education-count: (get education-count counters),
+                skill-count: (get skill-count counters),
+                reference-count: (+ current-count u1)
+              }
+            )
+            (map-delete reference-requests { requester: requester, referee: tx-sender })
+            (ok true)
+          )
+        )
+      )
+    )
+  )
+)
+
+(define-public (decline-reference-request (requester principal))
+  (if (is-some (map-get? reference-requests { requester: requester, referee: tx-sender }))
+    (begin
+      (map-delete reference-requests { requester: requester, referee: tx-sender })
+      (ok true)
+    )
+    ERR-REQUEST-NOT-FOUND
   )
 )
