@@ -11,6 +11,7 @@
 (define-constant MAX-EDUCATION-ENTRIES u10)
 (define-constant MAX-SKILLS u20)
 (define-constant MAX-REFERENCES u5)
+(define-constant MAX-CERTIFICATIONS u15)
 
 (define-data-var contract-owner principal tx-sender)
 
@@ -68,7 +69,8 @@
     work-count: uint,
     education-count: uint,
     skill-count: uint,
-    reference-count: uint
+    reference-count: uint,
+    certification-count: uint
   }
 )
 
@@ -104,6 +106,19 @@
   }
 )
 
+(define-map certifications
+  { user: principal, index: uint }
+  {
+    name: (string-ascii 150),
+    issuing-organization: (string-ascii 100),
+    issue-date: (string-ascii 20),
+    expiration-date: (string-ascii 20),
+    credential-id: (string-ascii 100),
+    credential-url: (string-ascii 200),
+    does-not-expire: bool
+  }
+)
+
 (define-read-only (get-profile (user principal))
   (map-get? user-profiles { user: user })
 )
@@ -125,7 +140,7 @@
 )
 
 (define-read-only (get-user-counters (user principal))
-  (default-to { work-count: u0, education-count: u0, skill-count: u0, reference-count: u0 }
+  (default-to { work-count: u0, education-count: u0, skill-count: u0, reference-count: u0, certification-count: u0 }
     (map-get? user-counters { user: user }))
 )
 
@@ -142,6 +157,10 @@
 
 (define-read-only (get-professional-reference (user principal) (referee principal))
   (map-get? professional-references { user: user, referee: referee })
+)
+
+(define-read-only (get-certification (user principal) (index uint))
+  (map-get? certifications { user: user, index: index })
 )
 
 (define-public (create-profile (name (string-ascii 100))
@@ -173,7 +192,7 @@
         )
         (map-set user-counters
           { user: tx-sender }
-          { work-count: u0, education-count: u0, skill-count: u0, reference-count: u0 }
+          { work-count: u0, education-count: u0, skill-count: u0, reference-count: u0, certification-count: u0 }
         )
         (ok true)
       )
@@ -245,7 +264,8 @@
               work-count: (+ current-count u1),
               education-count: (get education-count counters),
               skill-count: (get skill-count counters),
-              reference-count: (get reference-count counters)
+              reference-count: (get reference-count counters),
+              certification-count: (get certification-count counters)
             }
           )
           (ok current-count)
@@ -285,7 +305,8 @@
               work-count: (get work-count counters),
               education-count: (+ current-count u1),
               skill-count: (get skill-count counters),
-              reference-count: (get reference-count counters)
+              reference-count: (get reference-count counters),
+              certification-count: (get certification-count counters)
             }
           )
           (ok current-count)
@@ -316,7 +337,8 @@
               work-count: (get work-count counters),
               education-count: (get education-count counters),
               skill-count: (+ current-count u1),
-              reference-count: (get reference-count counters)
+              reference-count: (get reference-count counters),
+              certification-count: (get certification-count counters)
             }
           )
           (ok current-count)
@@ -472,7 +494,8 @@
                 work-count: (get work-count counters),
                 education-count: (get education-count counters),
                 skill-count: (get skill-count counters),
-                reference-count: (+ current-count u1)
+                reference-count: (+ current-count u1),
+                certification-count: (get certification-count counters)
               }
             )
             (map-delete reference-requests { requester: requester, referee: tx-sender })
@@ -491,5 +514,64 @@
       (ok true)
     )
     ERR-REQUEST-NOT-FOUND
+  )
+)
+
+(define-public (add-certification (name (string-ascii 150))
+                                  (issuing-organization (string-ascii 100))
+                                  (issue-date (string-ascii 20))
+                                  (expiration-date (string-ascii 20))
+                                  (credential-id (string-ascii 100))
+                                  (credential-url (string-ascii 200))
+                                  (does-not-expire bool))
+  (let ((counters (get-user-counters tx-sender))
+        (current-count (get certification-count counters)))
+    (if (>= current-count MAX-CERTIFICATIONS)
+      ERR-MAX-ENTRIES-REACHED
+      (if (is-eq (len name) u0)
+        ERR-INVALID-DATA
+        (if (is-eq (len issuing-organization) u0)
+          ERR-INVALID-DATA
+          (begin
+            (map-set certifications
+              { user: tx-sender, index: current-count }
+              {
+                name: name,
+                issuing-organization: issuing-organization,
+                issue-date: issue-date,
+                expiration-date: expiration-date,
+                credential-id: credential-id,
+                credential-url: credential-url,
+                does-not-expire: does-not-expire
+              }
+            )
+            (map-set user-counters
+              { user: tx-sender }
+              {
+                work-count: (get work-count counters),
+                education-count: (get education-count counters),
+                skill-count: (get skill-count counters),
+                reference-count: (get reference-count counters),
+                certification-count: (+ current-count u1)
+              }
+            )
+            (ok current-count)
+          )
+        )
+      )
+    )
+  )
+)
+
+(define-public (remove-certification (index uint))
+  (let ((counters (get-user-counters tx-sender))
+        (certification-count (get certification-count counters)))
+    (if (>= index certification-count)
+      ERR-ENTRY-NOT-FOUND
+      (begin
+        (map-delete certifications { user: tx-sender, index: index })
+        (ok true)
+      )
+    )
   )
 )
