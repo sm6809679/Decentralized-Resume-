@@ -119,6 +119,15 @@
   }
 )
 
+(define-map verified-profiles
+  { user: principal }
+  {
+    is-verified: bool,
+    verified-at: uint,
+    verifier: principal
+  }
+)
+
 (define-read-only (get-profile (user principal))
   (map-get? user-profiles { user: user })
 )
@@ -161,6 +170,17 @@
 
 (define-read-only (get-certification (user principal) (index uint))
   (map-get? certifications { user: user, index: index })
+)
+
+(define-read-only (is-profile-verified (user principal))
+  (match (map-get? verified-profiles { user: user })
+    entry (get is-verified entry)
+    false
+  )
+)
+
+(define-read-only (get-verification (user principal))
+  (map-get? verified-profiles { user: user })
 )
 
 (define-public (create-profile (name (string-ascii 100))
@@ -571,6 +591,27 @@
       (begin
         (map-delete certifications { user: tx-sender, index: index })
         (ok true)
+      )
+    )
+  )
+)
+
+(define-public (set-profile-verification (user principal) (is-verified bool))
+  (let ((owner (var-get contract-owner))
+        (caller tx-sender)
+        (current-time burn-block-height)
+        (profile (map-get? user-profiles { user: user })))
+    (if (not (is-eq caller owner))
+      ERR-NOT-AUTHORIZED
+      (if (is-none profile)
+        ERR-PROFILE-NOT-FOUND
+        (begin
+          (map-set verified-profiles
+            { user: user }
+            { is-verified: is-verified, verified-at: current-time, verifier: caller }
+          )
+          (ok true)
+        )
       )
     )
   )
