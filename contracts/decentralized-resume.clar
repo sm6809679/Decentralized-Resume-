@@ -6,6 +6,7 @@
 (define-constant ERR-REQUEST-EXISTS (err u105))
 (define-constant ERR-REQUEST-NOT-FOUND (err u106))
 (define-constant ERR-SELF-REFERENCE (err u107))
+(define-constant ERR-HANDLE-TAKEN (err u108))
 
 (define-constant MAX-WORK-ENTRIES u10)
 (define-constant MAX-EDUCATION-ENTRIES u10)
@@ -125,6 +126,20 @@
     is-verified: bool,
     verified-at: uint,
     verifier: principal
+  }
+)
+
+(define-map profile-handles
+  { handle: (string-ascii 50) }
+  {
+    owner: principal
+  }
+)
+
+(define-map handle-by-owner
+  { owner: principal }
+  {
+    handle: (string-ascii 50)
   }
 )
 
@@ -613,6 +628,57 @@
           (ok true)
         )
       )
+    )
+  )
+)
+
+(define-read-only (get-handle (user principal))
+  (map-get? handle-by-owner { owner: user })
+)
+
+(define-read-only (resolve-handle (handle (string-ascii 50)))
+  (map-get? profile-handles { handle: handle })
+)
+
+(define-public (claim-handle (handle (string-ascii 50)))
+  (let ((profile (map-get? user-profiles { user: tx-sender }))
+        (existing (map-get? profile-handles { handle: handle }))
+        (current (map-get? handle-by-owner { owner: tx-sender })))
+    (if (is-none profile)
+      ERR-PROFILE-NOT-FOUND
+      (if (is-eq (len handle) u0)
+        ERR-INVALID-DATA
+        (if (is-some existing)
+          ERR-HANDLE-TAKEN
+          (begin
+            (match current
+              entry
+              (begin
+                (map-delete profile-handles { handle: (get handle entry) })
+                true
+              )
+              true
+            )
+            (map-set profile-handles { handle: handle } { owner: tx-sender })
+            (map-set handle-by-owner { owner: tx-sender } { handle: handle })
+            (ok true)
+          )
+        )
+      )
+    )
+  )
+)
+
+(define-public (release-handle)
+  (let ((current (map-get? handle-by-owner { owner: tx-sender })))
+    (match current
+      entry
+      (begin
+        (map-delete profile-handles { handle: (get handle entry) })
+        (map-delete handle-by-owner { owner: tx-sender })
+        (ok true)
+      )
+      ERR-ENTRY-NOT-FOUND
     )
   )
 )
