@@ -13,6 +13,7 @@
 (define-constant MAX-SKILLS u20)
 (define-constant MAX-REFERENCES u5)
 (define-constant MAX-CERTIFICATIONS u15)
+(define-constant MAX-PROJECTS u10)
 
 (define-data-var contract-owner principal tx-sender)
 
@@ -142,6 +143,21 @@
     handle: (string-ascii 50)
   }
 )
+
+(define-map projects
+  { user: principal, index: uint }
+  {
+    name: (string-ascii 100),
+    description: (string-ascii 500),
+    url: (string-ascii 200),
+    technologies: (string-ascii 200),
+    start-date: (string-ascii 20),
+    end-date: (string-ascii 20),
+    is-ongoing: bool
+  }
+)
+
+(define-map user-project-counts principal uint)
 
 (define-read-only (get-profile (user principal))
   (map-get? user-profiles { user: user })
@@ -679,6 +695,59 @@
         (ok true)
       )
       ERR-ENTRY-NOT-FOUND
+    )
+  )
+)
+
+(define-read-only (get-project (user principal) (index uint))
+  (map-get? projects { user: user, index: index })
+)
+
+(define-read-only (get-user-project-count (user principal))
+  (default-to u0 (map-get? user-project-counts user))
+)
+
+(define-public (add-project (name (string-ascii 100))
+                          (description (string-ascii 500))
+                          (url (string-ascii 200))
+                          (technologies (string-ascii 200))
+                          (start-date (string-ascii 20))
+                          (end-date (string-ascii 20))
+                          (is-ongoing bool))
+  (let ((current-count (get-user-project-count tx-sender)))
+    (if (>= current-count MAX-PROJECTS)
+      ERR-MAX-ENTRIES-REACHED
+      (if (is-eq (len name) u0)
+        ERR-INVALID-DATA
+        (begin
+          (map-set projects
+            { user: tx-sender, index: current-count }
+            {
+              name: name,
+              description: description,
+              url: url,
+              technologies: technologies,
+              start-date: start-date,
+              end-date: end-date,
+              is-ongoing: is-ongoing
+            }
+          )
+          (map-set user-project-counts tx-sender (+ current-count u1))
+          (ok current-count)
+        )
+      )
+    )
+  )
+)
+
+(define-public (remove-project (index uint))
+  (let ((current-count (get-user-project-count tx-sender)))
+    (if (>= index current-count)
+      ERR-ENTRY-NOT-FOUND
+      (begin
+        (map-delete projects { user: tx-sender, index: index })
+        (ok true)
+      )
     )
   )
 )
